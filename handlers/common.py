@@ -16,7 +16,6 @@ MAIN_MENU = ReplyKeyboardMarkup(
         [BTN_HELP],
     ],
     resize_keyboard=True,
-    is_persistent=True,
 )
 
 HELP_TEXT = (

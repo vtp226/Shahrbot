@@ -63,8 +63,8 @@ async def incoming_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if len(chats) == 1:
         chat_id = chats[0]["chat_id"]
-        post_id = await db.add_post(chat_id, owner_id, content_type, text, file_id)
-        await message.reply_text(f"✅ پست #{post_id} به صفِ «{chats[0]['title']}» اضافه شد.")
+        post_id, local_id = await db.add_post(chat_id, owner_id, content_type, text, file_id)
+        await message.reply_text(f"✅ پست #{local_id} به صفِ «{chats[0]['title']}» اضافه شد.")
         return
 
     # چند کانال داریم -> محتوا را موقت نگه داریم و بپرسیم برای کدام چت است
@@ -97,13 +97,13 @@ async def choose_target_chat(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     owner_id = update.effective_user.id
-    post_id = await db.add_post(
+    post_id, local_id = await db.add_post(
         chat_id, owner_id, pending["content_type"], pending["text"], pending["file_id"]
     )
     chat = await db.get_chat(chat_id)
     title = chat["title"] if chat else str(chat_id)
     label = "آلبوم" if pending["content_type"] == "album" else "پست"
-    await query.edit_message_text(f"✅ {label} #{post_id} به صفِ «{title}» اضافه شد.")
+    await query.edit_message_text(f"✅ {label} #{local_id} به صفِ «{title}» اضافه شد.")
 
 
 # ---------------- albums ----------------
@@ -155,10 +155,10 @@ async def _finalize_album(context: ContextTypes.DEFAULT_TYPE):
 
     if len(chats) == 1:
         chat_id = chats[0]["chat_id"]
-        post_id = await db.add_post(chat_id, owner_id, "album", caption, payload)
+        post_id, local_id = await db.add_post(chat_id, owner_id, "album", caption, payload)
         await context.bot.send_message(
             private_chat_id,
-            f"✅ آلبوم #{post_id} ({len(items)} فایل) به صفِ «{chats[0]['title']}» اضافه شد.",
+            f"✅ آلبوم #{local_id} ({len(items)} فایل) به صفِ «{chats[0]['title']}» اضافه شد.",
         )
         return
 
@@ -244,8 +244,8 @@ async def queue_show(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = []
     kb_rows = []
     for p in posts:
-        lines.append(f"#{p['id']} | {_fmt_time(p['scheduled_time'])} | {_preview(p)}")
-        kb_rows.append([InlineKeyboardButton(f"❌ لغو #{p['id']}", callback_data=f"cancel:{p['id']}:{chat_id}")])
+        lines.append(f"#{p['local_id']} | {_fmt_time(p['scheduled_time'])} | {_preview(p)}")
+        kb_rows.append([InlineKeyboardButton(f"❌ لغو #{p['local_id']}", callback_data=f"cancel:{p['id']}:{chat_id}")])
     await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(kb_rows))
 
 
@@ -261,6 +261,6 @@ async def cancel_post_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = []
     kb_rows = []
     for p in posts:
-        lines.append(f"#{p['id']} | {_fmt_time(p['scheduled_time'])} | {_preview(p)}")
-        kb_rows.append([InlineKeyboardButton(f"❌ لغو #{p['id']}", callback_data=f"cancel:{p['id']}:{chat_id}")])
+        lines.append(f"#{p['local_id']} | {_fmt_time(p['scheduled_time'])} | {_preview(p)}")
+        kb_rows.append([InlineKeyboardButton(f"❌ لغو #{p['local_id']}", callback_data=f"cancel:{p['id']}:{chat_id}")])
     await query.edit_message_text("پست لغو شد.\n\n" + "\n".join(lines), reply_markup=InlineKeyboardMarkup(kb_rows))
