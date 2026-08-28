@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS posts (
     scheduled_time  TEXT,
     created_at      TEXT,
     sent_at         TEXT,
+    local_id        INTEGER,          -- شماره نمایشی، مستقل برای هر چت (شروع از ۱)
     FOREIGN KEY (chat_id) REFERENCES chats (chat_id) ON DELETE CASCADE
 );
 """
@@ -44,6 +45,23 @@ async def init_db(app=None):
         await conn.execute("PRAGMA journal_mode = WAL;")
         await conn.executescript(SCHEMA)
         await conn.commit()
+
+        # --- migration: چت‌های قبل از این نسخه ستون local_id را ندارند ---
+        cur = await conn.execute("PRAGMA table_info(posts)")
+        cols = [r[1] for r in await cur.fetchall()]
+        if "local_id" not in cols:
+            await conn.execute("ALTER TABLE posts ADD COLUMN local_id INTEGER")
+            await conn.commit()
+            cur = await conn.execute("SELECT DISTINCT chat_id FROM posts")
+            chat_ids = [r[0] for r in await cur.fetchall()]
+            for cid in chat_ids:
+                cur2 = await conn.execute(
+                    "SELECT id FROM posts WHERE chat_id=? ORDER BY id", (cid,)
+                )
+                rows = await cur2.fetchall()
+                for idx, (pid,) in enumerate(rows, start=1):
+                    await conn.execute("UPDATE posts SET local_id=? WHERE id=?", (idx, pid))
+            await conn.commit()
 
 
 def _now_iso():
@@ -133,12 +151,17 @@ async def add_post(chat_id: int, owner_id: int, content_type: str, text: str, fi
     async with aiosqlite.connect(DB_PATH) as conn:
         await conn.execute("PRAGMA foreign_keys = ON;")
         cur = await conn.execute(
-            """INSERT INTO posts (chat_id, owner_id, content_type, text, file_id, status, created_at)
-               VALUES (?, ?, ?, ?, ?, 'pending', ?)""",
-            (chat_id, owner_id, content_type, text, file_id, _now_iso()),
+            "SELECT COALESCE(MAX(local_id), 0) + 1 FROM posts WHERE chat_id=?", (chat_id,)
+        )
+        row = await cur.fetchone()
+        next_local_id = row[0]
+        cur = await conn.execute(
+            """INSERT INTO posts (chat_id, owner_id, content_type, text, file_id, status, created_at, local_id)
+               VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)""",
+            (chat_id, owner_id, content_type, text, file_id, _now_iso(), next_local_id),
         )
         await conn.commit()
-        return cur.lastrowid
+        return cur.lastrowid, next_local_id
 
 
 async def get_queue(chat_id: int):
