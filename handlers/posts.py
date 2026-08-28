@@ -12,12 +12,24 @@ TIMEZONE = ZoneInfo(os.environ.get("TIMEZONE", "Asia/Tehran"))
 
 def _extract_content(message):
     """Return (content_type, text, file_id) or (None, None, None) if unsupported."""
+    if message.text:
+        return "text", message.text, None
     if message.photo:
         return "photo", message.caption or "", message.photo[-1].file_id
     if message.video:
         return "video", message.caption or "", message.video.file_id
-    if message.text:
-        return "text", message.text, None
+    if message.animation:
+        return "animation", message.caption or "", message.animation.file_id
+    if message.sticker:
+        return "sticker", "", message.sticker.file_id
+    if message.voice:
+        return "voice", message.caption or "", message.voice.file_id
+    if message.audio:
+        return "audio", message.caption or "", message.audio.file_id
+    if message.document:
+        return "document", message.caption or "", message.document.file_id
+    if message.video_note:
+        return "video_note", "", message.video_note.file_id
     return None, None, None
 
 
@@ -28,7 +40,8 @@ async def incoming_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     content_type, text, file_id = _extract_content(message)
     if content_type is None:
         await message.reply_text(
-            "این نوع پیام پشتیبانی نمی‌شود. فقط متن، عکس یا ویدیو بفرستید."
+            "این نوع پیام پشتیبانی نمی‌شود (مثلاً نظرسنجی، موقعیت مکانی یا مخاطب). "
+            "متن، عکس، ویدیو، گیف، استیکر، ویس، آهنگ، فایل و ویدیوی گرد پشتیبانی می‌شوند."
         )
         return
 
@@ -90,11 +103,23 @@ def _fmt_time(iso_value):
         return iso_value
 
 
+CONTENT_LABELS = {
+    "photo": "🖼 عکس",
+    "video": "🎬 ویدیو",
+    "animation": "🎞 گیف",
+    "sticker": "🧩 استیکر",
+    "voice": "🎤 ویس",
+    "audio": "🎵 آهنگ",
+    "document": "📄 فایل",
+    "video_note": "⭕ ویدیوی گرد",
+}
+
+
 def _preview(post):
     if post["content_type"] == "text":
         t = (post["text"] or "").strip().replace("\n", " ")
         return t[:30] + ("…" if len(t) > 30 else "")
-    label = "🖼 عکس" if post["content_type"] == "photo" else "🎬 ویدیو"
+    label = CONTENT_LABELS.get(post["content_type"], post["content_type"])
     cap = (post["text"] or "").strip().replace("\n", " ")
     if cap:
         cap = " - " + cap[:20] + ("…" if len(cap) > 20 else "")
