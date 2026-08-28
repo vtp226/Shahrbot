@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS chats (
     title       TEXT,
     type        TEXT,
     owner_id    INTEGER,
-    active      INTEGER DEFAULT 1
+    active      INTEGER DEFAULT 1,
+    signature   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS windows (
@@ -63,6 +64,13 @@ async def init_db(app=None):
                     await conn.execute("UPDATE posts SET local_id=? WHERE id=?", (idx, pid))
             await conn.commit()
 
+        # --- migration: چت‌های قبل از این نسخه ستون signature را ندارند ---
+        cur = await conn.execute("PRAGMA table_info(chats)")
+        cols = [r[1] for r in await cur.fetchall()]
+        if "signature" not in cols:
+            await conn.execute("ALTER TABLE chats ADD COLUMN signature TEXT")
+            await conn.commit()
+
 
 def _now_iso():
     return dt.datetime.now(dt.timezone.utc).isoformat()
@@ -108,6 +116,14 @@ async def get_chat(chat_id: int):
         cur = await conn.execute("SELECT * FROM chats WHERE chat_id=?", (chat_id,))
         row = await cur.fetchone()
         return dict(row) if row else None
+
+
+async def set_signature(chat_id: int, signature: str | None):
+    async with aiosqlite.connect(DB_PATH) as conn:
+        await conn.execute(
+            "UPDATE chats SET signature=? WHERE chat_id=?", (signature, chat_id)
+        )
+        await conn.commit()
 
 
 async def get_active_chat_ids():

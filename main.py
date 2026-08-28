@@ -15,7 +15,7 @@ from telegram.ext import (
 
 import db
 import scheduling
-from handlers import common, membership, windows, posts
+from handlers import common, membership, windows, posts, signature
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
@@ -76,6 +76,23 @@ def build_app() -> Application:
         conversation_timeout=300,  # 5 دقیقه؛ جلوی گیر کردن دائمی را می‌گیرد
     )
     app.add_handler(addwindow_conv)
+
+    # ---- set/remove per-chat signature (ID appended to the end of posts) ----
+    setid_conv = ConversationHandler(
+        entry_points=[CommandHandler("setid", signature.setid_start)],
+        states={
+            signature.CHOOSE_CHAT: [
+                CallbackQueryHandler(signature.setid_choose_chat, pattern=r"^si_chat:")
+            ],
+            signature.ENTER_ID: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, signature.setid_enter_id),
+            ],
+            ConversationHandler.TIMEOUT: [MessageHandler(filters.ALL, signature.setid_timeout)],
+        },
+        fallbacks=[CommandHandler("cancel", common.cancel_cmd)],
+        conversation_timeout=300,
+    )
+    app.add_handler(setid_conv)
 
     # ---- windows list / delete ----
     app.add_handler(CommandHandler("windows", windows.windows_list_start))
