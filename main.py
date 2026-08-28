@@ -95,9 +95,20 @@ def build_app() -> Application:
     app.add_handler(MessageHandler(filters.Text([common.BTN_HELP]), common.help_cmd))
 
     # ---- incoming content (must be added after commands, catches the rest) ----
+    supported_content = (
+        filters.TEXT
+        | filters.PHOTO
+        | filters.VIDEO
+        | filters.ANIMATION
+        | filters.Sticker.ALL
+        | filters.VOICE
+        | filters.AUDIO
+        | filters.Document.ALL
+        | filters.VIDEO_NOTE
+    )
     app.add_handler(
         MessageHandler(
-            filters.ChatType.PRIVATE & (filters.TEXT | filters.PHOTO | filters.VIDEO) & ~filters.COMMAND,
+            filters.ChatType.PRIVATE & supported_content & ~filters.COMMAND,
             posts.incoming_message,
         )
     )

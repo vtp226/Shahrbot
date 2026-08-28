@@ -81,13 +81,26 @@ async def assign_slots_for_chat(chat_id: int):
 async def send_post(bot, post: dict):
     chat_id = post["chat_id"]
     caption = post["text"] or None
+    ctype = post["content_type"]
     try:
-        if post["content_type"] == "text":
+        if ctype == "text":
             await bot.send_message(chat_id=chat_id, text=post["text"] or "")
-        elif post["content_type"] == "photo":
+        elif ctype == "photo":
             await bot.send_photo(chat_id=chat_id, photo=post["file_id"], caption=caption)
-        elif post["content_type"] == "video":
+        elif ctype == "video":
             await bot.send_video(chat_id=chat_id, video=post["file_id"], caption=caption)
+        elif ctype == "animation":
+            await bot.send_animation(chat_id=chat_id, animation=post["file_id"], caption=caption)
+        elif ctype == "sticker":
+            await bot.send_sticker(chat_id=chat_id, sticker=post["file_id"])
+        elif ctype == "voice":
+            await bot.send_voice(chat_id=chat_id, voice=post["file_id"], caption=caption)
+        elif ctype == "audio":
+            await bot.send_audio(chat_id=chat_id, audio=post["file_id"], caption=caption)
+        elif ctype == "document":
+            await bot.send_document(chat_id=chat_id, document=post["file_id"], caption=caption)
+        elif ctype == "video_note":
+            await bot.send_video_note(chat_id=chat_id, video_note=post["file_id"])
         else:
             logger.warning("Unknown content_type for post %s", post["id"])
             await db.mark_failed(post["id"])
