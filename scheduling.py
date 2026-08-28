@@ -1,9 +1,10 @@
 import os
+import json
 import logging
 import datetime as dt
 from zoneinfo import ZoneInfo
 
-from telegram.constants import ParseMode
+from telegram import InputMediaPhoto, InputMediaVideo
 from telegram.error import TelegramError
 
 import db
@@ -101,6 +102,19 @@ async def send_post(bot, post: dict):
             await bot.send_document(chat_id=chat_id, document=post["file_id"], caption=caption)
         elif ctype == "video_note":
             await bot.send_video_note(chat_id=chat_id, video_note=post["file_id"])
+        elif ctype == "album":
+            items = json.loads(post["file_id"])
+            media = []
+            for i, it in enumerate(items):
+                cap = caption if i == 0 else None
+                if it["type"] == "photo":
+                    media.append(InputMediaPhoto(media=it["file_id"], caption=cap))
+                elif it["type"] == "video":
+                    media.append(InputMediaVideo(media=it["file_id"], caption=cap))
+            if not media:
+                await db.mark_failed(post["id"])
+                return
+            await bot.send_media_group(chat_id=chat_id, media=media)
         else:
             logger.warning("Unknown content_type for post %s", post["id"])
             await db.mark_failed(post["id"])
