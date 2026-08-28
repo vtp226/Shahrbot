@@ -1,3 +1,4 @@
+import json
 import datetime as dt
 from zoneinfo import ZoneInfo
 import os
@@ -8,6 +9,8 @@ from telegram.ext import ContextTypes
 import db
 
 TIMEZONE = ZoneInfo(os.environ.get("TIMEZONE", "Asia/Tehran"))
+
+ALBUM_BUFFER_SECONDS = 1.5
 
 
 def _extract_content(message):
@@ -37,6 +40,11 @@ async def incoming_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return
     message = update.message
+
+    if message.media_group_id:
+        await _buffer_album_item(update, context, message)
+        return
+
     content_type, text, file_id = _extract_content(message)
     if content_type is None:
         await message.reply_text(
@@ -80,17 +88,95 @@ async def choose_target_chat(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.answer()
     _, pending_id, chat_id = query.data.split(":")
     chat_id = int(chat_id)
+
     pending = context.user_data.get("pending_posts", {}).pop(pending_id, None)
+    if pending is None:
+        pending = context.application.bot_data.get("pending_album_posts", {}).pop(pending_id, None)
     if pending is None:
         await query.edit_message_text("این درخواست منقضی شده، دوباره پست را بفرستید.")
         return
+
     owner_id = update.effective_user.id
     post_id = await db.add_post(
         chat_id, owner_id, pending["content_type"], pending["text"], pending["file_id"]
     )
     chat = await db.get_chat(chat_id)
     title = chat["title"] if chat else str(chat_id)
-    await query.edit_message_text(f"✅ پست #{post_id} به صفِ «{title}» اضافه شد.")
+    label = "آلبوم" if pending["content_type"] == "album" else "پست"
+    await query.edit_message_text(f"✅ {label} #{post_id} به صفِ «{title}» اضافه شد.")
+
+
+# ---------------- albums ----------------
+
+async def _buffer_album_item(update: Update, context: ContextTypes.DEFAULT_TYPE, message):
+    group_id = message.media_group_id
+    if message.photo:
+        item = {"type": "photo", "file_id": message.photo[-1].file_id, "caption": message.caption or ""}
+    elif message.video:
+        item = {"type": "video", "file_id": message.video.file_id, "caption": message.caption or ""}
+    else:
+        return  # نوع پشتیبانی‌نشده داخل آلبوم؛ نادیده گرفته می‌شود
+
+    groups = context.application.bot_data.setdefault("media_groups", {})
+    entry = groups.setdefault(
+        group_id,
+        {"items": [], "owner_id": update.effective_user.id, "private_chat_id": update.effective_chat.id},
+    )
+    entry["items"].append(item)
+
+    job_name = f"album:{group_id}"
+    for job in context.job_queue.get_jobs_by_name(job_name):
+        job.schedule_removal()
+    context.job_queue.run_once(
+        _finalize_album, when=ALBUM_BUFFER_SECONDS, name=job_name, data={"group_id": group_id}
+    )
+
+
+async def _finalize_album(context: ContextTypes.DEFAULT_TYPE):
+    group_id = context.job.data["group_id"]
+    groups = context.application.bot_data.get("media_groups", {})
+    entry = groups.pop(group_id, None)
+    if not entry or not entry["items"]:
+        return
+
+    items = entry["items"]
+    caption = next((it["caption"] for it in items if it["caption"]), "")
+    owner_id = entry["owner_id"]
+    private_chat_id = entry["private_chat_id"]
+
+    chats = await db.get_owner_chats(owner_id)
+    if not chats:
+        await context.bot.send_message(
+            private_chat_id, "شما هنوز مالک هیچ کانال/گروهی نیستید. اول ربات را در کانال/گروه خود ادمین کنید."
+        )
+        return
+
+    payload = json.dumps([{"type": it["type"], "file_id": it["file_id"]} for it in items])
+
+    if len(chats) == 1:
+        chat_id = chats[0]["chat_id"]
+        post_id = await db.add_post(chat_id, owner_id, "album", caption, payload)
+        await context.bot.send_message(
+            private_chat_id,
+            f"✅ آلبوم #{post_id} ({len(items)} فایل) به صفِ «{chats[0]['title']}» اضافه شد.",
+        )
+        return
+
+    pending_id = f"album_{group_id}"
+    context.application.bot_data.setdefault("pending_album_posts", {})[pending_id] = {
+        "content_type": "album",
+        "text": caption,
+        "file_id": payload,
+    }
+    kb = [
+        [InlineKeyboardButton(c["title"], callback_data=f"postto:{pending_id}:{c['chat_id']}")]
+        for c in chats
+    ]
+    await context.bot.send_message(
+        private_chat_id,
+        f"این آلبوم ({len(items)} فایل) برای کدام کانال/گروه است؟",
+        reply_markup=InlineKeyboardMarkup(kb),
+    )
 
 
 def _fmt_time(iso_value):
@@ -119,6 +205,16 @@ def _preview(post):
     if post["content_type"] == "text":
         t = (post["text"] or "").strip().replace("\n", " ")
         return t[:30] + ("…" if len(t) > 30 else "")
+    if post["content_type"] == "album":
+        try:
+            n = len(json.loads(post["file_id"]))
+        except (ValueError, TypeError):
+            n = "?"
+        label = f"🖼🎬 آلبوم ({n} فایل)"
+        cap = (post["text"] or "").strip().replace("\n", " ")
+        if cap:
+            cap = " - " + cap[:20] + ("…" if len(cap) > 20 else "")
+        return label + cap
     label = CONTENT_LABELS.get(post["content_type"], post["content_type"])
     cap = (post["text"] or "").strip().replace("\n", " ")
     if cap:
