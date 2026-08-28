@@ -1,4 +1,5 @@
 import json
+import re
 import datetime as dt
 from zoneinfo import ZoneInfo
 import os
@@ -11,6 +12,43 @@ import db
 TIMEZONE = ZoneInfo(os.environ.get("TIMEZONE", "Asia/Tehran"))
 
 ALBUM_BUFFER_SECONDS = 1.5
+
+# نوع‌هایی که کپشن/متن‌شان واقعاً روی تلگرام نمایش داده می‌شود
+# (استیکر و ویدیوی گرد اصلاً کپشن پشتیبانی نمی‌کنند)
+SIGNATURE_ELIGIBLE_TYPES = {
+    "text", "photo", "video", "animation", "voice", "audio", "document", "album"
+}
+
+# خطی که شبیه یک آیدی/امضا به نظر می‌رسد: یوزرنیم تلگرامی یا لینک t.me
+_ID_LINE_RE = re.compile(r"^(@[A-Za-z0-9_]{3,32}|(https?://)?t\.me/\S+)$", re.IGNORECASE)
+
+
+def _apply_signature(content_type: str, text: str, signature: str | None) -> str:
+    """ته متن/کپشن را برای امضای این چت آماده می‌کند: هر خطِ آیدی‌مانند که در
+    انتهای متن باشد (چه با آیدیِ فعلی یکی باشد چه نه) حذف می‌شود و سپس، در
+    صورت تنظیم بودن امضا برای این چت، همان امضا زیر همه‌چیز نوشته می‌شود."""
+    if content_type not in SIGNATURE_ELIGIBLE_TYPES:
+        return text
+
+    lines = (text or "").splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    if lines:
+        last = lines[-1].strip()
+        matches_signature = bool(signature) and last == signature.strip()
+        if matches_signature or _ID_LINE_RE.match(last):
+            lines.pop()
+            while lines and not lines[-1].strip():
+                lines.pop()
+
+    body = "\n".join(lines)
+
+    if not signature:
+        return body
+    if body:
+        return f"{body}\n\n{signature}"
+    return signature
 
 
 def _extract_content(message):
@@ -63,6 +101,7 @@ async def incoming_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if len(chats) == 1:
         chat_id = chats[0]["chat_id"]
+        text = _apply_signature(content_type, text, chats[0].get("signature"))
         post_id, local_id = await db.add_post(chat_id, owner_id, content_type, text, file_id)
         await message.reply_text(f"✅ پست #{local_id} به صفِ «{chats[0]['title']}» اضافه شد.")
         return
@@ -97,10 +136,13 @@ async def choose_target_chat(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     owner_id = update.effective_user.id
-    post_id, local_id = await db.add_post(
-        chat_id, owner_id, pending["content_type"], pending["text"], pending["file_id"]
-    )
     chat = await db.get_chat(chat_id)
+    text = _apply_signature(
+        pending["content_type"], pending["text"], chat.get("signature") if chat else None
+    )
+    post_id, local_id = await db.add_post(
+        chat_id, owner_id, pending["content_type"], text, pending["file_id"]
+    )
     title = chat["title"] if chat else str(chat_id)
     label = "آلبوم" if pending["content_type"] == "album" else "پست"
     await query.edit_message_text(f"✅ {label} #{local_id} به صفِ «{title}» اضافه شد.")
@@ -155,6 +197,7 @@ async def _finalize_album(context: ContextTypes.DEFAULT_TYPE):
 
     if len(chats) == 1:
         chat_id = chats[0]["chat_id"]
+        caption = _apply_signature("album", caption, chats[0].get("signature"))
         post_id, local_id = await db.add_post(chat_id, owner_id, "album", caption, payload)
         await context.bot.send_message(
             private_chat_id,
