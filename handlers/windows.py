@@ -6,6 +6,8 @@ import db
 
 CHOOSE_CHAT, ENTER_START, ENTER_END, ENTER_INTERVAL = range(4)
 
+CANCEL_HINT = "\n\n(هر لحظه می‌توانید با /cancel این عملیات را لغو کنید.)"
+
 TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 TIME_RE_24 = re.compile(r"^(24:00|[01]?\d:[0-5]\d|2[0-3]:[0-5]\d)$")
 
@@ -39,7 +41,7 @@ async def addwindow_choose_chat(update: Update, context: ContextTypes.DEFAULT_TY
     chat_id = int(query.data.split(":", 1)[1])
     context.user_data["aw_chat_id"] = chat_id
     await query.edit_message_text(
-        "ساعت شروع بازه را به شکل HH:MM وارد کنید (مثلاً 12:00):"
+        "ساعت شروع بازه را به شکل HH:MM وارد کنید (مثلاً 12:00):" + CANCEL_HINT
     )
     return ENTER_START
 
@@ -47,11 +49,11 @@ async def addwindow_choose_chat(update: Update, context: ContextTypes.DEFAULT_TY
 async def addwindow_enter_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if not TIME_RE.match(text):
-        await update.message.reply_text("فرمت درست نیست. دوباره مثل 12:00 وارد کنید:")
+        await update.message.reply_text("فرمت درست نیست. دوباره مثل 12:00 وارد کنید:" + CANCEL_HINT)
         return ENTER_START
     context.user_data["aw_start"] = text
     await update.message.reply_text(
-        "ساعت پایان بازه را وارد کنید (برای نیمه‌شب می‌توانید 24:00 بنویسید):"
+        "ساعت پایان بازه را وارد کنید (برای نیمه‌شب می‌توانید 24:00 بنویسید):" + CANCEL_HINT
     )
     return ENTER_END
 
@@ -59,10 +61,12 @@ async def addwindow_enter_start(update: Update, context: ContextTypes.DEFAULT_TY
 async def addwindow_enter_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     if not TIME_RE_24.match(text):
-        await update.message.reply_text("فرمت درست نیست. مثل 24:00 یا 18:30 وارد کنید:")
+        await update.message.reply_text("فرمت درست نیست. مثل 24:00 یا 18:30 وارد کنید:" + CANCEL_HINT)
         return ENTER_END
     context.user_data["aw_end"] = text
-    await update.message.reply_text("هر چند ساعت یک‌بار پست منتشر شود؟ (عدد، مثلاً 3 یا 1.5):")
+    await update.message.reply_text(
+        "هر چند ساعت یک‌بار پست منتشر شود؟ (عدد، مثلاً 3 یا 1.5):" + CANCEL_HINT
+    )
     return ENTER_INTERVAL
 
 
@@ -73,7 +77,9 @@ async def addwindow_enter_interval(update: Update, context: ContextTypes.DEFAULT
         if interval <= 0:
             raise ValueError
     except ValueError:
-        await update.message.reply_text("لطفاً یک عدد معتبر بزرگ‌تر از صفر وارد کنید:")
+        await update.message.reply_text(
+            "لطفاً یک عدد معتبر بزرگ‌تر از صفر وارد کنید:" + CANCEL_HINT
+        )
         return ENTER_INTERVAL
 
     chat_id = context.user_data.pop("aw_chat_id")
@@ -84,6 +90,25 @@ async def addwindow_enter_interval(update: Update, context: ContextTypes.DEFAULT
         f"✅ بازه زمانی {start} تا {end} هر {interval} ساعت اضافه شد.\n"
         "برای افزودن بازه دوم دوباره /addwindow را بزنید، یا /windows را برای مشاهده لیست ببینید."
     )
+    return ConversationHandler.END
+
+
+async def addwindow_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Runs automatically if the user doesn't respond for a while, so the bot
+    never gets permanently stuck waiting for a time input."""
+    context.user_data.pop("aw_chat_id", None)
+    context.user_data.pop("aw_start", None)
+    context.user_data.pop("aw_end", None)
+    chat_id = update.effective_chat.id if update and update.effective_chat else None
+    if chat_id:
+        try:
+            await context.bot.send_message(
+                chat_id,
+                "⏱ زمانِ تنظیم بازه (۵ دقیقه) بدون پاسخ تمام شد و لغو گردید.\n"
+                "برای شروع دوباره /addwindow را بزنید.",
+            )
+        except Exception:
+            pass
     return ConversationHandler.END
 
 
@@ -117,6 +142,31 @@ async def windows_list_choose_chat(update: Update, context: ContextTypes.DEFAULT
             [InlineKeyboardButton(f"🗑 حذف {w['start_time']}-{w['end_time']}", callback_data=f"wd:{w['id']}:{chat_id}")]
         )
     await query.edit_message_text("\n".join(lines), reply_markup=InlineKeyboardMarkup(kb_rows))
+
+
+async def menu_button_escape(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """If the user taps another menu button while mid-way through /addwindow,
+    cleanly cancel the form instead of swallowing the tap as a time value."""
+    from handlers import common, posts  # local import avoids circular import at module load
+
+    context.user_data.pop("aw_chat_id", None)
+    context.user_data.pop("aw_start", None)
+    context.user_data.pop("aw_end", None)
+
+    text = update.message.text
+    if text == common.BTN_WINDOWS:
+        await windows_list_start(update, context)
+    elif text == common.BTN_QUEUE:
+        await posts.queue_start(update, context)
+    elif text == common.BTN_MYCHATS:
+        await common.my_chats(update, context)
+    elif text == common.BTN_HELP:
+        await common.help_cmd(update, context)
+    elif text == common.BTN_ADDWINDOW:
+        await update.message.reply_text(
+            "فرم قبلی لغو شد. دوباره روی «➕ افزودن بازه» بزنید تا از اول شروع کنیم."
+        )
+    return ConversationHandler.END
 
 
 async def windows_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
