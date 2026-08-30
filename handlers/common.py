@@ -32,7 +32,11 @@ HELP_TEXT = (
     "/windows — مشاهده/حذف بازه‌های زمانی\n"
     "/queue — مشاهده صف پست‌ها\n"
     "/setid — تنظیم آیدی/امضایی که خودکار ته پست‌ها اضافه شود\n"
-    "/cancel — لغو عملیات جاری\n"
+    "/cancel — لغو عملیات جاری\n\n"
+    "نکته: با زدن روی هر کانال/گروه در «📢 کانال‌های من» یک داشبورد مخصوص همان چت باز می‌شود "
+    "که در آن می‌توانید بازه‌های همان کانال را جدا از بقیه ببینید/ویرایش/حذف کنید، بازه تازه اضافه کنید، "
+    "و آن چت را به‌عنوان مقصد پیش‌فرض ارسال پست تنظیم کنید تا پست‌های بعدی بدون سؤالِ «برای کدام کانال؟» "
+    "مستقیم همان‌جا در صف قرار بگیرند.\n"
 )
 
 
@@ -75,10 +79,68 @@ async def my_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "(دقت کنید که همان کسی که ربات را ادمین می‌کند باید قبلش این چت خصوصی با ربات را استارت کرده باشد.)"
         )
         return
-    kb = [[InlineKeyboardButton(c["title"], callback_data=f"noop:{c['chat_id']}")] for c in chats]
+    kb = [[InlineKeyboardButton(c["title"], callback_data=f"chat_dash:{c['chat_id']}")] for c in chats]
     await update.message.reply_text(
-        "کانال‌ها/گروه‌های تحت مدیریت شما:", reply_markup=InlineKeyboardMarkup(kb)
+        "کانال‌ها/گروه‌های تحت مدیریت شما — برای مدیریت هرکدام روی آن بزنید:",
+        reply_markup=InlineKeyboardMarkup(kb),
     )
+
+
+def _dashboard_kb(chat_id: int, is_default: bool):
+    rows = [
+        [InlineKeyboardButton("🗓 بازه‌های این کانال", callback_data=f"wl_chat:{chat_id}")],
+        [InlineKeyboardButton("➕ افزودن بازه به این کانال", callback_data=f"aw_direct:{chat_id}")],
+        [InlineKeyboardButton("🗒 صف پست‌های این کانال", callback_data=f"q_chat:{chat_id}")],
+    ]
+    if is_default:
+        rows.append([InlineKeyboardButton("❌ برداشتن مقصد پیش‌فرض", callback_data=f"cleardef:{chat_id}")])
+    else:
+        rows.append([InlineKeyboardButton("📌 تنظیم به‌عنوان مقصد پیش‌فرض ارسال", callback_data=f"setdef:{chat_id}")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def _render_dashboard(query, owner_id: int, chat_id: int):
+    chat = await db.get_chat(chat_id)
+    if not chat:
+        await query.edit_message_text("این کانال/گروه دیگر پیدا نشد.")
+        return
+
+    default_chat_id = await db.get_default_chat(owner_id)
+    is_default = default_chat_id == chat_id
+
+    lines = [f"📢 «{chat['title']}»"]
+    if chat.get("signature"):
+        lines.append(f"آیدی ته پست: {chat['signature']}")
+    if is_default:
+        lines.append(
+            "\n✅ این چت الان مقصدِ پیش‌فرضِ ارسال پست شماست: هرچه همین‌جا برای ربات بفرستید، "
+            "بدون سؤال «برای کدام کانال؟» مستقیم در صفِ همین چت قرار می‌گیرد."
+        )
+
+    await query.edit_message_text("\n".join(lines), reply_markup=_dashboard_kb(chat_id, is_default))
+
+
+async def chat_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chat_id = int(query.data.split(":", 1)[1])
+    await _render_dashboard(query, update.effective_user.id, chat_id)
+
+
+async def set_default_chat_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("این کانال به‌عنوان مقصد پیش‌فرض تنظیم شد ✅")
+    chat_id = int(query.data.split(":", 1)[1])
+    await db.set_default_chat(update.effective_user.id, chat_id)
+    await _render_dashboard(query, update.effective_user.id, chat_id)
+
+
+async def clear_default_chat_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("مقصد پیش‌فرض برداشته شد")
+    chat_id = int(query.data.split(":", 1)[1])
+    await db.set_default_chat(update.effective_user.id, None)
+    await _render_dashboard(query, update.effective_user.id, chat_id)
 
 
 async def cancel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):

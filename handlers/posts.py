@@ -74,6 +74,19 @@ def _extract_content(message):
     return None, None, None
 
 
+async def _resolve_target_chat(owner_id: int, chats: list):
+    """اگر فقط یک چت داشته باشیم، یا کاربر یک مقصد پیش‌فرض تنظیم کرده باشد، همان را
+    برمی‌گرداند تا دیگر سؤال «برای کدام کانال؟» پرسیده نشود. در غیر این صورت None."""
+    if len(chats) == 1:
+        return chats[0]
+    default_chat_id = await db.get_default_chat(owner_id)
+    if default_chat_id is not None:
+        for c in chats:
+            if c["chat_id"] == default_chat_id:
+                return c
+    return None
+
+
 async def incoming_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type != "private":
         return
@@ -99,14 +112,17 @@ async def incoming_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    if len(chats) == 1:
-        chat_id = chats[0]["chat_id"]
-        text = _apply_signature(content_type, text, chats[0].get("signature"))
-        post_id, local_id = await db.add_post(chat_id, owner_id, content_type, text, file_id)
-        await message.reply_text(f"✅ پست #{local_id} به صفِ «{chats[0]['title']}» اضافه شد.")
+    target = await _resolve_target_chat(owner_id, chats)
+    if target:
+        text = _apply_signature(content_type, text, target.get("signature"))
+        post_id, local_id = await db.add_post(target["chat_id"], owner_id, content_type, text, file_id)
+        note = f"✅ پست #{local_id} به صفِ «{target['title']}» اضافه شد."
+        if len(chats) > 1:
+            note += "\n(برای انتخاب/تغییر مقصد پیش‌فرض ارسال، از «📢 کانال‌های من» استفاده کنید.)"
+        await message.reply_text(note)
         return
 
-    # چند کانال داریم -> محتوا را موقت نگه داریم و بپرسیم برای کدام چت است
+    # چند کانال داریم و مقصد پیش‌فرض هم تنظیم نشده -> محتوا را موقت نگه داریم و بپرسیم برای کدام چت است
     pending_id = str(message.message_id)
     context.user_data.setdefault("pending_posts", {})[pending_id] = {
         "content_type": content_type,
@@ -195,14 +211,14 @@ async def _finalize_album(context: ContextTypes.DEFAULT_TYPE):
 
     payload = json.dumps([{"type": it["type"], "file_id": it["file_id"]} for it in items])
 
-    if len(chats) == 1:
-        chat_id = chats[0]["chat_id"]
-        caption = _apply_signature("album", caption, chats[0].get("signature"))
-        post_id, local_id = await db.add_post(chat_id, owner_id, "album", caption, payload)
-        await context.bot.send_message(
-            private_chat_id,
-            f"✅ آلبوم #{local_id} ({len(items)} فایل) به صفِ «{chats[0]['title']}» اضافه شد.",
-        )
+    target = await _resolve_target_chat(owner_id, chats)
+    if target:
+        caption = _apply_signature("album", caption, target.get("signature"))
+        post_id, local_id = await db.add_post(target["chat_id"], owner_id, "album", caption, payload)
+        note = f"✅ آلبوم #{local_id} ({len(items)} فایل) به صفِ «{target['title']}» اضافه شد."
+        if len(chats) > 1:
+            note += "\n(برای انتخاب/تغییر مقصد پیش‌فرض ارسال، از «📢 کانال‌های من» استفاده کنید.)"
+        await context.bot.send_message(private_chat_id, note)
         return
 
     pending_id = f"album_{group_id}"
