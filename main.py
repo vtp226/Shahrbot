@@ -47,6 +47,11 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("mychats", common.my_chats))
     app.add_handler(CallbackQueryHandler(common.noop_callback, pattern=r"^noop:"))
 
+    # ---- per-chat dashboard (📢 کانال‌های من -> انتخاب یک کانال) ----
+    app.add_handler(CallbackQueryHandler(common.chat_dashboard, pattern=r"^chat_dash:"))
+    app.add_handler(CallbackQueryHandler(common.set_default_chat_cb, pattern=r"^setdef:"))
+    app.add_handler(CallbackQueryHandler(common.clear_default_chat_cb, pattern=r"^cleardef:"))
+
     # ---- add window conversation ----
     menu_button_filter = filters.Text(
         [common.BTN_ADDWINDOW, common.BTN_WINDOWS, common.BTN_QUEUE, common.BTN_MYCHATS, common.BTN_HELP]
@@ -55,6 +60,7 @@ def build_app() -> Application:
         entry_points=[
             CommandHandler("addwindow", windows.addwindow_start),
             MessageHandler(filters.Text([common.BTN_ADDWINDOW]), windows.addwindow_start),
+            CallbackQueryHandler(windows.addwindow_direct, pattern=r"^aw_direct:"),
         ],
         states={
             windows.CHOOSE_CHAT: [CallbackQueryHandler(windows.addwindow_choose_chat, pattern=r"^aw_chat:")],
@@ -76,6 +82,22 @@ def build_app() -> Application:
         conversation_timeout=300,  # 5 دقیقه؛ جلوی گیر کردن دائمی را می‌گیرد
     )
     app.add_handler(addwindow_conv)
+
+    # ---- edit an existing window (✏️ ویرایش button next to each window) ----
+    edit_window_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(windows.edit_window_start, pattern=r"^we:")],
+        states={
+            windows.EW_FIELD: [CallbackQueryHandler(windows.edit_window_choose_field, pattern=r"^ewf:")],
+            windows.EW_VALUE: [
+                MessageHandler(menu_button_filter, windows.menu_button_escape),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, windows.edit_window_enter_value),
+            ],
+            ConversationHandler.TIMEOUT: [MessageHandler(filters.ALL, windows.edit_window_timeout)],
+        },
+        fallbacks=[CommandHandler("cancel", common.cancel_cmd)],
+        conversation_timeout=300,
+    )
+    app.add_handler(edit_window_conv)
 
     # ---- set/remove per-chat signature (ID appended to the end of posts) ----
     setid_conv = ConversationHandler(

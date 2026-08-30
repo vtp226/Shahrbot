@@ -23,6 +23,11 @@ CREATE TABLE IF NOT EXISTS windows (
     FOREIGN KEY (chat_id) REFERENCES chats (chat_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS owner_settings (
+    owner_id        INTEGER PRIMARY KEY,
+    default_chat_id INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS posts (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     chat_id         INTEGER NOT NULL,
@@ -159,6 +164,59 @@ async def delete_window(window_id: int):
     async with aiosqlite.connect(DB_PATH) as conn:
         await conn.execute("DELETE FROM windows WHERE id=?", (window_id,))
         await conn.commit()
+
+
+async def get_window(window_id: int):
+    async with aiosqlite.connect(DB_PATH) as conn:
+        conn.row_factory = aiosqlite.Row
+        cur = await conn.execute("SELECT * FROM windows WHERE id=?", (window_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def update_window(
+    window_id: int,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    interval_hours: float | None = None,
+):
+    fields, values = [], []
+    if start_time is not None:
+        fields.append("start_time=?")
+        values.append(start_time)
+    if end_time is not None:
+        fields.append("end_time=?")
+        values.append(end_time)
+    if interval_hours is not None:
+        fields.append("interval_hours=?")
+        values.append(interval_hours)
+    if not fields:
+        return
+    values.append(window_id)
+    async with aiosqlite.connect(DB_PATH) as conn:
+        await conn.execute(f"UPDATE windows SET {', '.join(fields)} WHERE id=?", values)
+        await conn.commit()
+
+
+# ---------- owner settings (default send target) ----------
+
+async def set_default_chat(owner_id: int, chat_id: int | None):
+    async with aiosqlite.connect(DB_PATH) as conn:
+        await conn.execute(
+            """INSERT INTO owner_settings (owner_id, default_chat_id) VALUES (?, ?)
+               ON CONFLICT(owner_id) DO UPDATE SET default_chat_id=excluded.default_chat_id""",
+            (owner_id, chat_id),
+        )
+        await conn.commit()
+
+
+async def get_default_chat(owner_id: int):
+    async with aiosqlite.connect(DB_PATH) as conn:
+        cur = await conn.execute(
+            "SELECT default_chat_id FROM owner_settings WHERE owner_id=?", (owner_id,)
+        )
+        row = await cur.fetchone()
+        return row[0] if row and row[0] is not None else None
 
 
 # ---------- posts ----------
